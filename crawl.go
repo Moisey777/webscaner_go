@@ -5,10 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/jackdanger/collectlinks"
 )
+
+var visited = make(map[string]bool)
 
 func main() {
 	flag.Parse()
@@ -22,24 +25,20 @@ func main() {
 
 	queue := make(chan string)
 
-	go func() {
-
-		queue <- args[0]
-	}()
+	go func() { queue <- args[0] }()
 
 	for uri := range queue {
-
 		enqueue(uri, queue)
 	}
 }
 
 func enqueue(uri string, queue chan string) {
 	fmt.Println("fetching", uri)
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
-	}
+	visited[uri] = true
 	transport := &http.Transport{
-		TLSClientConfig: tlsConfig,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
 	}
 	client := http.Client{Transport: transport}
 	resp, err := client.Get(uri)
@@ -51,6 +50,24 @@ func enqueue(uri string, queue chan string) {
 	links := collectlinks.All(resp.Body)
 
 	for _, link := range links {
-		go func() { queue <- link }()
+		absolute := fixUrl(link, uri)
+		if uri != "" {
+			if !visited[absolute] {
+				go func() { queue <- absolute }()
+			}
+		}
 	}
+}
+
+func fixUrl(href, base string) string {
+	uri, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+	baseUrl, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	uri = baseUrl.ResolveReference(uri)
+	return uri.String()
 }
